@@ -1,0 +1,9 @@
+{
+  "uuid": "headphone-battery-percentage@aaron.biju",
+  "name": "Headphone Battery Percentage",
+  "description": "Displays the headphone battery percentage next to the bluetooth icon",
+  "shell-version": [
+    "42"
+  ],
+  "url": ""
+}
