@@ -1,6 +1,7 @@
 const { GObject, St, Gio, GLib, Clutter } = imports.gi;
 const Main = imports.ui.main;
 const PanelMenu = imports.ui.panelMenu;
+const PopupMenu = imports.ui.popupMenu;
 
 const DEVICE_ICONS = {
     5: '🖱️',   // Mouse
@@ -26,12 +27,21 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
         this._uuid = uuid;
         this._devices = {};
         this._signalIds = [];
+        this._bluezDevices = {};
+        this._bluezSignalIds = [];
+        this._menuItems = {};
 
         this.box = new St.BoxLayout({ 
             style_class: 'panel-status-menu-box',
             pack_start: true
         });
         
+        this.icon = new St.Icon({
+            icon_name: 'bluetooth-disabled-symbolic',
+            style_class: 'system-status-icon',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+
         this.label = new St.Label({
             text: '',
             y_align: Clutter.ActorAlign.CENTER,
@@ -41,12 +51,141 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
         // Bold text with subtle horizontal margins to fit cleanly beside the bluetooth icon
         this.label.set_style('font-weight: bold; margin-left: 6px; margin-right: 6px;');
         
+        this.box.add_child(this.icon);
         this.box.add_child(this.label);
         this.add_child(this.box);
         
-        this.hide();
+        this.show();
 
         this._initUPower();
+        this._initBluez();
+    }
+
+    _initBluez() {
+        let objAddedId = Gio.DBus.system.signal_subscribe(
+            'org.bluez',
+            'org.freedesktop.DBus.ObjectManager',
+            'InterfacesAdded',
+            null,
+            null,
+            Gio.DBusSignalFlags.NONE,
+            (conn, sender, path, ifaceName, signalName, parameters) => {
+                let [objPath, interfaces] = parameters.deepUnpack();
+                if (interfaces['org.bluez.Device1']) {
+                    this._addBluezDevice(objPath, interfaces['org.bluez.Device1']);
+                }
+            }
+        );
+        this._bluezSignalIds.push(objAddedId);
+        
+        let objRemovedId = Gio.DBus.system.signal_subscribe(
+            'org.bluez',
+            'org.freedesktop.DBus.ObjectManager',
+            'InterfacesRemoved',
+            null,
+            null,
+            Gio.DBusSignalFlags.NONE,
+            (conn, sender, path, ifaceName, signalName, parameters) => {
+                let [objPath, interfaces] = parameters.deepUnpack();
+                if (interfaces.includes('org.bluez.Device1')) {
+                    this._removeBluezDevice(objPath);
+                }
+            }
+        );
+        this._bluezSignalIds.push(objRemovedId);
+        
+        let propsId = Gio.DBus.system.signal_subscribe(
+            'org.bluez',
+            'org.freedesktop.DBus.Properties',
+            'PropertiesChanged',
+            null,
+            null,
+            Gio.DBusSignalFlags.NONE,
+            (conn, sender, path, ifaceName, signalName, parameters) => {
+                let [iface, changedProps, invalidatedProps] = parameters.deepUnpack();
+                if (iface === 'org.bluez.Device1' && this._bluezDevices[path]) {
+                    this._updateBluezDeviceProps(path, changedProps);
+                }
+            }
+        );
+        this._bluezSignalIds.push(propsId);
+        
+        Gio.DBus.system.call(
+            'org.bluez',
+            '/',
+            'org.freedesktop.DBus.ObjectManager',
+            'GetManagedObjects',
+            null,
+            null,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            null,
+            (conn, res) => {
+                try {
+                    let result = conn.call_finish(res);
+                    let [objects] = result.deepUnpack();
+                    for (let path in objects) {
+                        let interfaces = objects[path];
+                        if (interfaces['org.bluez.Device1']) {
+                            this._addBluezDevice(path, interfaces['org.bluez.Device1']);
+                        }
+                    }
+                } catch(e) {
+                    logError(e, '[HeadphoneBatteryIndicator] Failed to get managed objects');
+                }
+            }
+        );
+    }
+
+    _unpackProp(prop) {
+        return prop ? (prop.deepUnpack ? prop.deepUnpack() : prop.unpack()) : null;
+    }
+
+    _addBluezDevice(path, props) {
+        let paired = this._unpackProp(props.Paired);
+        let name = this._unpackProp(props.Name) || this._unpackProp(props.Alias) || 'Unknown';
+        let connected = this._unpackProp(props.Connected);
+        
+        this._bluezDevices[path] = {
+            paired: paired,
+            name: name,
+            connected: connected
+        };
+        this._updateDisplay();
+    }
+    
+    _removeBluezDevice(path) {
+        if (this._bluezDevices[path]) {
+            delete this._bluezDevices[path];
+            this._updateDisplay();
+        }
+    }
+    
+    _updateBluezDeviceProps(path, changedProps) {
+        let dev = this._bluezDevices[path];
+        if (!dev) return;
+        
+        let changed = false;
+        
+        if ('Paired' in changedProps) {
+            dev.paired = this._unpackProp(changedProps['Paired']);
+            changed = true;
+        }
+        if ('Name' in changedProps) {
+            dev.name = this._unpackProp(changedProps['Name']);
+            changed = true;
+        } else if ('Alias' in changedProps) {
+            dev.name = this._unpackProp(changedProps['Alias']);
+            changed = true;
+        }
+        if ('Connected' in changedProps) {
+            dev.connected = this._unpackProp(changedProps['Connected']);
+            changed = true;
+        }
+        
+        if (changed) {
+            this._updateDisplay();
+        }
     }
 
     _initUPower() {
@@ -179,6 +318,15 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
 
     _updateDisplay() {
         let displayTexts = [];
+        let hasConnectedDevices = false;
+        
+        for (let path in this._bluezDevices) {
+            if (this._bluezDevices[path].connected) {
+                hasConnectedDevices = true;
+                break;
+            }
+        }
+
         for (let devicePath in this._devices) {
             let percentage = this._getProperty(devicePath, 'Percentage');
             let type = this._getProperty(devicePath, 'Type');
@@ -186,19 +334,119 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
             if (percentage !== null && percentage !== undefined && percentage > 0) {
                 let icon = DEVICE_ICONS[type] || '🔋';
                 displayTexts.push(`${icon} ${Math.round(percentage)}%`);
+                hasConnectedDevices = true;
             }
         }
 
         if (displayTexts.length > 0) {
             this.label.set_text(displayTexts.join(' | '));
-            this.show();
+            this.label.show();
         } else {
             this.label.set_text('');
-            this.hide();
+            this.label.hide();
+        }
+        
+        if (hasConnectedDevices) {
+            if (displayTexts.length > 0) {
+                this.icon.hide();
+            } else {
+                this.icon.icon_name = 'bluetooth-active-symbolic';
+                this.icon.show();
+            }
+        } else {
+            this.icon.icon_name = 'bluetooth-disabled-symbolic';
+            this.icon.show();
+        }
+
+        this.show();
+        this._updateMenu();
+    }
+
+    _updateMenu() {
+        for (let path in this._menuItems) {
+            if (!this._bluezDevices[path] || !this._bluezDevices[path].paired) {
+                this._menuItems[path].destroy();
+                delete this._menuItems[path];
+            }
+        }
+        
+        for (let path in this._bluezDevices) {
+            let bluezDev = this._bluezDevices[path];
+            if (!bluezDev.paired) continue;
+            
+            let batteryText = "";
+            if (bluezDev.connected) {
+                let macString = path.includes('dev_') ? path.split('dev_')[1] : null;
+                if (macString) {
+                    for (let upowerPath in this._devices) {
+                        if (upowerPath.includes(macString)) {
+                            let percentage = this._getProperty(upowerPath, 'Percentage');
+                            if (percentage !== null && percentage !== undefined && percentage > 0) {
+                                batteryText = ` (${Math.round(percentage)}%)`;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            let labelText = bluezDev.name + batteryText;
+            
+            if (this._menuItems[path]) {
+                let menuItem = this._menuItems[path];
+                if (menuItem.label.text !== labelText) {
+                    menuItem.label.text = labelText;
+                }
+                if (menuItem.state !== bluezDev.connected) {
+                    menuItem._ignoreToggle = true;
+                    menuItem.setToggleState(bluezDev.connected);
+                    menuItem._ignoreToggle = false;
+                }
+            } else {
+                let menuItem = new PopupMenu.PopupSwitchMenuItem(labelText, bluezDev.connected);
+                menuItem._ignoreToggle = false;
+                menuItem.connect('toggled', (item, state) => {
+                    if (item._ignoreToggle) return;
+                    
+                    bluezDev.connected = state; 
+                    let method = state ? 'Connect' : 'Disconnect';
+                    Gio.DBus.system.call(
+                        'org.bluez',
+                        path,
+                        'org.bluez.Device1',
+                        method,
+                        null,
+                        null,
+                        Gio.DBusCallFlags.NONE,
+                        -1,
+                        null,
+                        (conn, res) => {
+                            try {
+                                conn.call_finish(res);
+                            } catch(e) {
+                                logError(e, `[HeadphoneBatteryIndicator] Failed to ${method} ${path}`);
+                                bluezDev.connected = !state;
+                                item._ignoreToggle = true;
+                                item.setToggleState(!state);
+                                item._ignoreToggle = false;
+                            }
+                        }
+                    );
+                });
+                this.menu.addMenuItem(menuItem);
+                this._menuItems[path] = menuItem;
+            }
         }
     }
 
     destroy() {
+        for (let path in this._menuItems) {
+            if (this._menuItems[path]) {
+                this._menuItems[path].destroy();
+            }
+        }
+        this._menuItems = {};
+
         // Disconnect all devices
         for (let devicePath in this._devices) {
             this._removeDevice(devicePath);
@@ -206,6 +454,13 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
 
         // Disconnect UPower signals
         for (let signalId of this._signalIds) {
+            try {
+                Gio.DBus.system.signal_unsubscribe(signalId);
+            } catch (e) {}
+        }
+
+        // Disconnect BlueZ signals
+        for (let signalId of this._bluezSignalIds) {
             try {
                 Gio.DBus.system.signal_unsubscribe(signalId);
             } catch (e) {}
