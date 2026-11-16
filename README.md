@@ -4,6 +4,8 @@ A lightweight, premium GNOME Shell extension for Linux (Ubuntu/Debian) that disp
 
 Designed to sit neatly next to the Bluetooth/status icons, it updates dynamically using D-Bus and UPower notifications with zero polling overhead.
 
+Requires GNOME Shell 45 or later.
+
 ---
 
 ## ✨ Features
@@ -61,11 +63,6 @@ Depending on your windowing system:
 > **Wayland Sessions (Default on modern Ubuntu)**
 > GNOME Shell cannot be hot-reloaded under Wayland. You **must log out of your current desktop session and log back in** to initialize and activate the extension.
 
-> [!TIP]
-> **X11 / Xorg Sessions**
-> You can restart GNOME Shell directly without logging out:
-> Press `Alt + F2`, type `r`, and press `Enter`.
-
 ---
 
 ## 🛠️ Diagnostics & Customization
@@ -78,7 +75,7 @@ upower --dump
 If your Bluetooth device is listed with a `percentage` field under UPower, it will be automatically picked up and displayed by this widget.
 
 ### Modifying Icons
-You can change the icons displayed for different device types by editing the `DEVICE_ICONS` map at the top of [extension.js](file:///home/aaron.biju@acsiatech.com/Documents/bluetooth-battery-percentage/extension.js#L5-L19):
+You can change the icons displayed for different device types by editing the `DEVICE_ICONS` map at the top of [extension.js](./extension.js):
 ```javascript
 const DEVICE_ICONS = {
     5: '🖱️',   // Mouse

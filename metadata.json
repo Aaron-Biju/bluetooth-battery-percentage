@@ -3,7 +3,12 @@
   "name": "Headphone Battery Percentage",
   "description": "Displays the headphone battery percentage next to the bluetooth icon",
   "shell-version": [
-    "42"
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
   ],
   "url": ""
 }

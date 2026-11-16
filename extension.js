@@ -1,7 +1,12 @@
-const { GObject, St, Gio, GLib, Clutter } = imports.gi;
-const Main = imports.ui.main;
-const PanelMenu = imports.ui.panelMenu;
-const PopupMenu = imports.ui.popupMenu;
+import GObject from 'gi://GObject';
+import St from 'gi://St';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Clutter from 'gi://Clutter';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const DEVICE_ICONS = {
     5: '🖱️',   // Mouse
@@ -22,18 +27,16 @@ const DEVICE_ICONS = {
 const HeadphoneBatteryIndicator = GObject.registerClass({
     GTypeName: 'HeadphoneBatteryIndicator'
 }, class HeadphoneBatteryIndicator extends PanelMenu.Button {
-    _init(uuid) {
+    _init() {
         super._init(0.0, 'Headphone Battery Indicator');
-        this._uuid = uuid;
         this._devices = {};
         this._signalIds = [];
         this._bluezDevices = {};
         this._bluezSignalIds = [];
         this._menuItems = {};
 
-        this.box = new St.BoxLayout({ 
-            style_class: 'panel-status-menu-box',
-            pack_start: true
+        this.box = new St.BoxLayout({
+            style_class: 'panel-status-menu-box'
         });
         
         this.icon = new St.Icon({
@@ -131,7 +134,7 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
                         }
                     }
                 } catch(e) {
-                    logError(e, '[HeadphoneBatteryIndicator] Failed to get managed objects');
+                    console.error('[HeadphoneBatteryIndicator] Failed to get managed objects', e);
                 }
             }
         );
@@ -239,7 +242,7 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
                 }
             }
         } catch (e) {
-            logError(e, '[HeadphoneBatteryIndicator] Failed to initialize UPower DBus listeners');
+            console.error('[HeadphoneBatteryIndicator] Failed to initialize UPower DBus listeners', e);
         }
     }
 
@@ -301,7 +304,7 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
                 this._updateDisplay();
             }
         } catch (e) {
-            logError(e, '[HeadphoneBatteryIndicator] Failed to add device: ' + devicePath);
+            console.error('[HeadphoneBatteryIndicator] Failed to add device: ' + devicePath, e);
         }
     }
 
@@ -424,7 +427,7 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
                             try {
                                 conn.call_finish(res);
                             } catch(e) {
-                                logError(e, `[HeadphoneBatteryIndicator] Failed to ${method} ${path}`);
+                                console.error(`[HeadphoneBatteryIndicator] Failed to ${method} ${path}`, e);
                                 bluezDev.connected = !state;
                                 item._ignoreToggle = true;
                                 item.setToggleState(!state);
@@ -470,21 +473,14 @@ const HeadphoneBatteryIndicator = GObject.registerClass({
     }
 });
 
-let indicator;
+export default class HeadphoneBatteryExtension extends Extension {
+    enable() {
+        this._indicator = new HeadphoneBatteryIndicator();
+        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, 'right');
+    }
 
-function init(metadata) {
-    // Nothing needed
-}
-
-function enable() {
-    indicator = new HeadphoneBatteryIndicator('headphone-battery-percentage@aaron.biju');
-    // Add to right side of the status area, index 0. This places it to the immediate left of aggregateMenu
-    Main.panel.addToStatusArea('headphone-battery-percentage@aaron.biju', indicator, 0, 'right');
-}
-
-function disable() {
-    if (indicator) {
-        indicator.destroy();
-        indicator = null;
+    disable() {
+        this._indicator?.destroy();
+        this._indicator = null;
     }
 }
